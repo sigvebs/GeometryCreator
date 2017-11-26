@@ -1,3 +1,13 @@
+/**
+ * @file
+ * @author  Sigve Bøe Skattum <sigve@fys.uio.no>
+ *
+ * @section DESCRIPTION
+ *
+ * The Meshgenerator class can generate a unordered grid of points from
+ * a binary tiff-image using the
+ */
+
 #ifndef MESHGENERATOR_H
 #define MESHGENERATOR_H
 
@@ -7,7 +17,7 @@
 #include <unordered_map>
 #include <boost/filesystem.hpp>
 #include <random>
-#include <chrono>
+//#include <chrono>
 #include <omp.h>
 
 #include "mg_functions.h"
@@ -30,6 +40,7 @@ struct Parameters
     int imageResolution = 6000;
 
     // Boundaries
+    bool setBoundaries = false;
     double X_0 = 0;
     double X_1 = 1;
     double Y_0 = 0;
@@ -44,12 +55,16 @@ struct Parameters
 
     string basePath = "/media/Media4/Scratch/MeshGenerator/tmp";
     string imgPath = "";
+    string imageFormat = "png";
 
     bool testingSave = false;
     int testSaveFreq = 100;
 
     int redistributionFrequency = 100;
     int nRedistributedPoints = 0;
+
+    int openmp_threads = 2;
+    bool saveImage = false;
 };
 //------------------------------------------------------------------------------
 class MeshGenerator
@@ -91,8 +106,8 @@ protected:
 
     arma::mat x;
     arma::vec js;
-    std::vector<vector<int>> gridNeighbours;
-    std::vector<vector<int>> particlesInGridPoint;
+    std::vector<std::vector<int>> gridNeighbours;
+    std::vector<std::vector<int>> particlesInGridPoint;
 
     unsigned seed;
     std::default_random_engine generator;
@@ -118,11 +133,14 @@ protected:
     string basePath;
     int imageResolution;
     int testSaveFreq;
+    bool saveImage = false;
 
     int findGridId(const arma::vec2 & r_i);
     void checkBoundaries();
 
     int openmp_threads;
+
+    void printProgress(double progress);
 };
 //------------------------------------------------------------------------------
 // Functions
