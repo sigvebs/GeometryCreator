@@ -1,12 +1,17 @@
-INCLUDEPATH += $$TOP_PWD/libs
 SRC_DIR = $$TOP_PWD/src
+INCLUDEPATH += $$SRC_DIR
+LIBS += -larmadillo
+LIBS += -lboost_system -lboost_filesystem
+LIBS += -ltiff -lpng -lX11
 
-LIBS += -larmadillo  -lboost_system -lboost_filesystem -lX11
+CONFIG *= c++11
+QMAKE_RPATHDIR += $$TOP_OUT_PWD/src
+COMMON_CXXFLAGS += -std=c++11
+QMAKE_CXXFLAGS += $$COMMON_CXXFLAGS
 
 # OPEN MP
 LIBS += -fopenmp
 QMAKE_CXX += -fopenmp
-
 
 release {
     # Remoing other O flags
@@ -16,10 +21,5 @@ release {
 
     # add the desired -O3 if not present
     QMAKE_CXXFLAGS_RELEASE *= -O3
-    DEFINES += ARMA_NO_DEBUG
+#    DEFINES += ARMA_NO_DEBUG
 }
-
-
-QMAKE_RPATHDIR += $$TOP_OUT_PWD/src
-COMMON_CXXFLAGS += -std=c++11
-QMAKE_CXXFLAGS += $$COMMON_CXXFLAGS

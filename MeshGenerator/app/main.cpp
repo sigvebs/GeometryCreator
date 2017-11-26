@@ -20,21 +20,19 @@ int main(int argc, char** argv)
     }
 
     // Reading configuration file
-    try
-    {
+    try {
         cfg.readFile( cfgFileName.c_str() );
     }
-    catch (const libconfig::FileIOException &fioex)
-    {
+    catch (const libconfig::FileIOException &fioex) {
         std::cerr << "I/O error while reading the configuration file." << std::endl;
         exit(EXIT_FAILURE);
     }
-    catch (const libconfig::ParseException &pex)
-    {
+    catch (const libconfig::ParseException &pex) {
         std::cerr << "Parse error at " << pex.getFile() << ":" << pex.getLine()
                   << " - " << pex.getError() << std::endl;
         exit(EXIT_FAILURE);
     }
+    cfg.setAutoConvert(true);
     libconfig::Setting &root = cfg.getRoot();
 
     //--------------------------------------------------------------------------
@@ -58,23 +56,31 @@ int main(int argc, char** argv)
         std::cerr << "MultiplicationFactor not supplied" << std::endl;
 
     if(root.exists("savePath"))
-         root.lookupValue("savePath", param.basePath);
+    {
+        param.basePath = (const char *) cfg.lookup("savePath");
+//         root.lookupValue("savePath", param.basePath);
+    }
     else{
         std::cerr << "Save path not supplied" << std::endl;
         exit(EXIT_FAILURE);
     }
 
     if(root.exists("imgPath"))
-        root.lookupValue("imgPath", param.imgPath);
+        param.imgPath = (const char *) cfg.lookup("imgPath");
+//        root.lookupValue("imgPath", param.imgPath);
     else{
         std::cerr << "Image path not supplied" << std::endl;
         exit(EXIT_FAILURE);
     }
 
     if(root.exists("periodic_x"))
-        param.periodic_x = root["periodic_x"];
+        param.periodic_x = (int) root["periodic_x"];
     if(root.exists("periodic_y"))
-        param.periodic_y = root["periodic_y"];
+        param.periodic_y = (int) root["periodic_y"];
+    if(root.exists("saveImage"))
+        param.saveImage = (int) root["saveImage"];
+    if(root.exists("imageResolution"))
+        param.imageResolution = (int) root["imageResolution"];
     if(root.exists("alpha_1"))
         param.alpha_1 = root["alpha_1"];
     if(root.exists("alpha_2"))
@@ -91,6 +97,21 @@ int main(int argc, char** argv)
         param.redistributionFrequency = root["redistributionFrequency"];
     if(root.exists("nRedistributedPoints"))
         param.nRedistributedPoints = root["nRedistributedPoints"];
+    if(root.exists("openmp_threads"))
+        param.openmp_threads = root["openmp_threads"];
+
+
+    if(root.exists("X") && root.exists("Y"))
+    {
+        libconfig::Setting &cfg_X = root["X"];
+        libconfig::Setting &cfg_Y = root["Y"];
+        param.X_0 = cfg_X[0];
+        param.X_1 = cfg_X[1];
+        param.Y_0 = cfg_Y[0];
+        param.Y_1 = cfg_Y[1];
+        param.setBoundaries = true;
+    }
+
 
     param.q = param.nParticles*param.q;
     //--------------------------------------------------------------------------
@@ -108,7 +129,9 @@ int main(int argc, char** argv)
     arma::mat x = mg.createMesh();
     std::cout << "Geometry created" << std::endl;
     mg.save_image_and_xyz(param.basePath + "/mesh");
+    std::cout << "Calculating Radial Distribution" << std::endl;
     mg.calculateRadialDistribution();
+    std::cout << "Writing configuration" << std::endl;
     mg.writeConfiguration();
 
     double n_secs = timer.toc();

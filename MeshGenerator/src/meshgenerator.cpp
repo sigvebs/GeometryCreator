@@ -13,11 +13,8 @@ mg::MeshGenerator::MeshGenerator(mg::Parameters parameters):
     h = image.height();
     w = image.width();
     img_data = arma::mat(h, w);
-
-    for(int j=0;j<w;j++)
-    {
-        for(int i=0;i<h;i++)
-        {
+    for(int j=0;j<w;j++) {
+        for(int i=0;i<h;i++) {
             img_data(i,j) = image(j,i,0,0)/(255.0);
         }
     }
@@ -30,11 +27,18 @@ mg::MeshGenerator::MeshGenerator(mg::Parameters parameters):
     alpha_2 = parameters.alpha_2;
     beta_1 = parameters.beta_1;
     beta_2 = parameters.beta_2;
-    X_0 = 0;
-    X_1 = (double)w/w;
-    Y_0 = 0;
-    Y_1 = (double)h/w;
-
+    
+    if(! parameters.setBoundaries) {
+        X_0 = 0;
+        X_1 = (double)w/w;
+        Y_0 = 0;
+        Y_1 = (double)h/w;
+    } else {
+        X_0 = parameters.X_0;
+        X_1 = parameters.X_1;
+        Y_0 = parameters.Y_0;
+        Y_1 = parameters.Y_1;
+    }
     x = arma::randu(2,n);
     js = arma::ones(n);
 
@@ -50,6 +54,7 @@ mg::MeshGenerator::MeshGenerator(mg::Parameters parameters):
 
     periodic_x = parameters.periodic_x;
     periodic_y = parameters.periodic_y;
+    saveImage = parameters.saveImage;
 
     imageResolution = parameters.imageResolution;
     basePath = parameters.basePath;
@@ -57,7 +62,7 @@ mg::MeshGenerator::MeshGenerator(mg::Parameters parameters):
 
     setDomainSize(2.01);
 
-    openmp_threads = 8;
+    openmp_threads = parameters.openmp_threads;
 }
 //------------------------------------------------------------------------------
 void mg::MeshGenerator::initializeFromImage()
@@ -84,11 +89,28 @@ arma::mat mg::MeshGenerator::createMesh()
     initializeFromImage();
 
     std::uniform_real_distribution<double> distribution_rand_particle(X_0, n);
-
-    // Sampling the image Mone Carlo style and adjusting the point centers
+    // Sampling the image Monte Carlo style and adjusting the point centers
     // untill convergence.
-    for (int k=0; k<threshold;k++)
-    {
+
+//    vector<array<double, 3>> neighbours(n);
+    vector<vector<double>> neighbours(n, vector<double>(3,1));
+
+
+#ifdef FORCE_OMP_CPU
+        omp_set_num_threads(openmp_threads);
+#endif
+#pragma omp parallel for
+    for(int i=0; i<n; i++) {
+        vector<double> &dun = neighbours[i];
+        dun[0] = 0;
+        dun[1] = 0;
+        dun[2] = 0;
+    }
+
+    for (int k=0; k<threshold;k++) {
+//        std::cout << "k = " << k << std::endl;
+        printProgress(double(k)/threshold);
+
         checkBoundaries();
         mapParticlesToGrid();
 
@@ -112,13 +134,12 @@ arma::mat mg::MeshGenerator::createMesh()
             }
         }
 
-        unordered_map <int, vector <arma::vec2>> neighbours;
-
+#ifdef FORCE_OMP_CPU
         omp_set_num_threads(openmp_threads);
+#endif
 #pragma omp parallel for
-        for(int r=0; r<q; r++)
-        {
-            arma::vec2 y_r;
+        for(int r=0; r<q; r++) {
+            double y_r[2];
             double maxLen = numeric_limits<double>::max();
             int indexMax = -1;
 
@@ -126,50 +147,58 @@ arma::mat mg::MeshGenerator::createMesh()
             {
                 y_r[0] = distribution_x(generator);
                 y_r[1] = distribution_y(generator);
-            }while(img_data(y_r(1)/dy, y_r(0)/dx) > 0);
+            }while(img_data(y_r[1]/dy, y_r[0]/dx) > 0);
 
-            arma::vec2 y_tmp = y_r;
-            int gId = findGridId(y_tmp);
+            arma::vec2 y_t = y_r;
+            int gId = findGridId(y_t);
+            double y_tmp[2];
+            y_tmp[0] = y_t(0);
+            y_tmp[1] = y_t(1);
 
             // Finding the closest voronoi center
             //------------------------------------------------------------------
             // Checking this gridpoint
             //------------------------------------------------------------------
 
+            double x_k[2];
+            double y_r_copy[2];
             for(int k:particlesInGridPoint[gId])
             {
-                arma::vec2 y_r_copy = y_r;
-                arma::vec2 x_k = y_r - x.col(k);
+                y_r_copy[0] = y_r[0];
+                y_r_copy[1] = y_r[1];
+                x_k[0] = y_r[0] - x(0, k);
+                x_k[1] = y_r[1] - x(1, k);
 
                 if(periodic_x)
                 {
-                    if(x_k(0) > 0.5*DX){
-                        x_k(0) -= DX;
-                        y_r_copy(0) -= DX;
-                    }else if(x_k(0) < -0.5*DX){
-                        x_k(0) += DX;
-                        y_r_copy(0) += DX;
+                    if(x_k[0] > 0.5*DX){
+                        x_k[0] -= DX;
+                        y_r_copy[0] -= DX;
+                    }else if(x_k[0] < -0.5*DX){
+                        x_k[0] += DX;
+                        y_r_copy[0] += DX;
                     }
                 }
 
                 if(periodic_y)
                 {
-                    if(x_k(1) > 0.5*DY){
-                        x_k(1) -= DY;
-                        y_r_copy(1) -= DY;
-                    }else if(x_k(1) < -0.5*DY){
-                        x_k(1) += DY;
-                        y_r_copy(1) += DY;
+                    if(x_k[1] > 0.5*DY){
+                        x_k[1] -= DY;
+                        y_r_copy[1] -= DY;
+                    }else if(x_k[1] < -0.5*DY){
+                        x_k[1] += DY;
+                        y_r_copy[1] += DY;
                     }
                 }
 
-                double dr_rk = x_k(0)*x_k(0) + x_k(1)*x_k(1);
+                double dr_rk = x_k[0]*x_k[0] + x_k[1]*x_k[1];
 
                 if(dr_rk < maxLen)
                 {
                     maxLen = dr_rk;
                     indexMax = k;
-                    y_tmp = y_r_copy;
+                    y_tmp[0] = y_r_copy[0];
+                    y_tmp[1] = y_r_copy[1];
                 }
             }
 
@@ -180,68 +209,80 @@ arma::mat mg::MeshGenerator::createMesh()
             {
                 for(int k:particlesInGridPoint[gridNeighbour])
                 {
-                    arma::vec2 y_r_copy = y_r;
-                    arma::vec2 x_k = y_r - x.col(k);
+                    y_r_copy[0] = y_r[0];
+                    y_r_copy[1] = y_r[1];
+                    x_k[0] = y_r[0] - x(0, k);
+                    x_k[1] = y_r[1] - x(1, k);
 
                     if(periodic_x)
                     {
-                        if(x_k(0) > 0.5*DX){
-                            x_k(0) -= DX;
-                            y_r_copy(0) -= DX;
-                        }else if(x_k(0) < -0.5*DX){
-                            x_k(0) += DX;
-                            y_r_copy(0) += DX;
+                        if(x_k[0] > 0.5*DX){
+                            x_k[0] -= DX;
+                            y_r_copy[0] -= DX;
+                        }else if(x_k[0] < -0.5*DX){
+                            x_k[0] += DX;
+                            y_r_copy[0] += DX;
                         }
                     }
 
                     if(periodic_y)
                     {
-                        if(x_k(1) > 0.5*DY){
-                            x_k(1) -= DY;
-                            y_r_copy(1) -= DY;
-                        }else if(x_k(1) < -0.5*DY){
-                            x_k(1) += DY;
-                            y_r_copy(1) += DY;
+                        if(x_k[1] > 0.5*DY){
+                            x_k[1] -= DY;
+                            y_r_copy[1] -= DY;
+                        }else if(x_k[1] < -0.5*DY){
+                            x_k[1] += DY;
+                            y_r_copy[1] += DY;
                         }
                     }
 
-                    double dr_rk = x_k(0)*x_k(0) + x_k(1)*x_k(1);
+                    double dr_rk = x_k[0]*x_k[0] + x_k[1]*x_k[1];
 
                     if(dr_rk < maxLen)
                     {
                         maxLen = dr_rk;
                         indexMax = k;
-                        y_tmp = y_r_copy;
+                        y_tmp[0] = y_r_copy[0];
+                        y_tmp[1] = y_r_copy[1];
                     }
                 }
             }
             //------------------------------------------------------------------
             // Storing the result
 #pragma omp critical
-            neighbours[indexMax].push_back(y_tmp);
+            {
+                if(indexMax >= 0) {
+                    vector<double> &du = neighbours[indexMax];
+                    du[0] += y_tmp[0];
+                    du[1] += y_tmp[1];
+                    du[2] += 1;
+                }
+            }
         }
 
+#ifdef FORCE_OMP_CPU
         omp_set_num_threads(openmp_threads);
+#endif
 #pragma omp parallel for
-        for(int i=0; i<n; i++)
-        {
-            vector <arma::vec2> neigh = neighbours[i];
-            if(neigh.size()>0)
-            {
-                arma::vec2 x_i =  x.col(i);
-                double j = js(i);
-                // Finding the average of the random points
-                arma::vec2 u_r = arma::zeros(2);
-                for (uint l=0; l<neigh.size(); l++)
-                {
-                    const arma::vec2& yr = neigh[l];
-                    u_r += yr;
-                }
-                u_r /= neigh.size();
+        for(int i=0; i<n; i++) {
+            vector<double> &dun = neighbours[i];
 
-                x.col(i) = ((alpha_1*j + beta_1)*x_i + (alpha_2*j + beta_2)*u_r)/(j+1);
-                js(i) += 1;
-            }
+            if(dun[2] <= 0)
+                continue;
+            double j = js(i);
+            arma::vec2 x_i =  x.col(i);
+            arma::vec2 u_r;
+            u_r[0] = dun[0];
+            u_r[1] = dun[1];
+
+            u_r /= dun[2];
+
+            x.col(i) = ((alpha_1*j + beta_1)*x_i + (alpha_2*j + beta_2)*u_r)/(j+1);
+            js(i) += 1;
+
+            dun[0] = 0;
+            dun[1] = 0;
+            dun[2] = 0;
         }
     }
 
@@ -329,7 +370,9 @@ void mg::MeshGenerator::mapParticlesToGrid()
     }
 
     // Placing all particles in the grid
-    omp_set_num_threads(openmp_threads);
+#ifdef FORCE_OMP_CPU
+        omp_set_num_threads(openmp_threads);
+#endif
 #pragma omp parallel for
     for(int i=0; i<n; i++)
     {
@@ -358,6 +401,10 @@ void mg::MeshGenerator::mapParticlesToGrid()
 //------------------------------------------------------------------------------
 void mg::MeshGenerator::save_image_and_xyz(string base, int nr)
 {
+    // Bounds check
+    checkBoundaries();
+    mapParticlesToGrid();
+
     string fileName;
     if(nr == -1)
         fileName = base + ".pgm";
@@ -370,15 +417,13 @@ void mg::MeshGenerator::save_image_and_xyz(string base, int nr)
     arma::mat image(resolution_y, resolution_x);
     image.zeros();
 
-    // Bounds check
-    checkBoundaries();
-    mapParticlesToGrid();
-
     int pix_hole = 0;
     //--------------------------------------------------------------------------
     // Creating a Voronoi image and computing the areas
     //--------------------------------------------------------------------------
-    omp_set_num_threads(openmp_threads);
+#ifdef FORCE_OMP_CPU
+        omp_set_num_threads(openmp_threads);
+#endif
 #pragma omp parallel for
     for (int i=0; i<resolution_x;i++)
     {
@@ -433,6 +478,7 @@ void mg::MeshGenerator::save_image_and_xyz(string base, int nr)
                     indexMax = k;
                 }
             }
+
             //------------------------------------------------------------------
             // Checking neighbouring gridpoint
             //------------------------------------------------------------------
@@ -469,8 +515,15 @@ void mg::MeshGenerator::save_image_and_xyz(string base, int nr)
                     }
                 }
             }
-            image(j, i) = indexMax;
-            areas[indexMax] += 1.0;
+
+            if(indexMax != -1)
+            {
+                image(j, i) = indexMax;
+                areas[indexMax] += 1.0;
+            }else
+            {
+                image(j, i) = 0;
+            }
         }
     }
 
@@ -479,7 +532,8 @@ void mg::MeshGenerator::save_image_and_xyz(string base, int nr)
         image(x(1, k)*resolution_y/Y_1, x(0, k)*resolution_x) = 1.0;
 
     // Saving the voronoi image
-    image.save(fileName, arma::pgm_binary);
+    if(saveImage)
+        image.save(fileName, arma::pgm_binary);
 
     //--------------------------------------------------------------------------
     // Saving xyz-file with volume
@@ -491,16 +545,19 @@ void mg::MeshGenerator::save_image_and_xyz(string base, int nr)
     ofstream outStream(fileName.c_str());
 
     outStream << x.n_cols << endl;
-    outStream << "# id x y volume" << endl;
+    outStream << "# id x y z volume" << endl;
     double dxdy = (X_1 - X_0)*(Y_1 - Y_0);
     double height = 1.0;
     double s_volume = 0;
-    double total_pix = resolution_x*resolution_y - pix_hole;
+//    double total_pix = resolution_x*resolution_y - pix_hole;
+    double total_pix = resolution_x*resolution_y;
+//    double optimalPackingOfCircles = 0.907;
+    double optimalPackingOfCircles = 1.0    ;
     for (int i=0; i<n;i++)
     {
-        double volume = dxdy*height* areas[i]/(total_pix);
+        double volume = optimalPackingOfCircles*dxdy*height* areas[i]/(total_pix);
         const arma::vec2& r = x.col(i);
-        outStream << i << "\t" << r[0] << "\t" << r[1] << "\t" << volume << std::endl;
+        outStream << i << "\t" << r[0] << "\t" << r[1] << "\t"<< " 0 " << " " << volume << std::endl;
         s_volume += volume;
     }
     outStream.close();
@@ -537,11 +594,13 @@ double mg::MeshGenerator::calculateRadialDistribution(int nr)
     mapParticlesToGrid();
 
     int nBins = 300;
-    double maxLength = 1.5*gridSpacing_x;
+    double maxLength = 1.6*gridSpacing_x;
     double histSpacing = maxLength/nBins;
     vector<int> histogram(nBins, 0);
 
-    omp_set_num_threads(openmp_threads);
+#ifdef FORCE_OMP_CPU
+        omp_set_num_threads(openmp_threads);
+#endif
 #pragma omp parallel for
     for(int i=0; i<n; i++)
     {
@@ -626,25 +685,14 @@ double mg::MeshGenerator::calculateRadialDistribution(int nr)
         fileName = basePath + "/histogram_" + to_string(nr) + ".hist";
     ofstream outStream(fileName.c_str());
 
-    // Normalizing the histogram
-    double normFactor = 0;
-    for(uint i=1;i<histogram.size(); i++)
-    {
-        double r = i*histSpacing;
-        normFactor += histogram[i]/(r*r);
-    }
 
     for(uint i=1;i<histogram.size(); i++)
     {
-        double r = i*histSpacing;
-        outStream << r << "\t" << histogram[i]/(r*r)/normFactor << std::endl;
+        double r1 = i*histSpacing;
+        double r2 = r1 + histSpacing;
+        outStream << r1 + 0.5*histSpacing << "\t" << histogram[i]/(M_PI*(pow(r2,2) - pow(r1,2))) << std::endl;
     }
     outStream.close();
-
-    // Resetting the grid
-    setDomainSize(2.01);
-    createDomainGrid();
-    mapParticlesToGrid();
 
     // Finding the optimal spacing between the particles
     int maxIndex = -1;
@@ -653,16 +701,22 @@ double mg::MeshGenerator::calculateRadialDistribution(int nr)
 
     for(uint i=1;i<histogram.size(); i++)
     {
-        double r = i*histSpacing;
-        if(histogram[i]/(r*r)/normFactor > maxValue)
+        double r1 = i*histSpacing;
+        double r2 = r1 + histSpacing;
+        double hist_i = histogram[i]/(M_PI*(pow(r2,2) - pow(r1,2)));
+        if(hist_i > maxValue)
         {
             maxIndex = i;
-            maxValue = histogram[i];
+            maxValue = hist_i;
         }
     }
 
-    optimalGridSpacing = maxIndex*histSpacing + 0.5*histSpacing;
+    // Resetting the grid
+    setDomainSize(2.01);
+    createDomainGrid();
+    mapParticlesToGrid();
 
+    optimalGridSpacing = (maxIndex + 0.5)*histSpacing;
     return optimalGridSpacing;
 }
 //------------------------------------------------------------------------------
@@ -678,25 +732,26 @@ void mg::MeshGenerator::writeConfiguration()
     outStream << "spacing = " << optimalGridSpacing << std::endl;
     int n_x = floor((X_1 - X_0)/optimalGridSpacing);
     int n_y = floor((Y_1 - Y_0)/optimalGridSpacing);
-    outStream << "latticePoints = \"[" << n_x<< ", " << n_y << ", " << "1]\""
+    outStream << "latticePoints = [" << n_x<< ", " << n_y << ", " << "1]"
               << std::endl;
-    outStream << "boundaries = \"[" << X_0 << ", " << X_1 <<  ", "
+    outStream << "boundaries = [" << X_0 << ", " << X_1 <<  ", "
               << Y_0 << ", " << Y_1 << ", "
-              << -0.5*optimalGridSpacing << ", " << 0.5*optimalGridSpacing << "]\""
+              << -0.5*optimalGridSpacing << ", " << 0.5*optimalGridSpacing << "]"
               << std::endl;
 
-    outStream << "periodic = \"[";
+    outStream << "periodic = [";
     if(periodic_x)
-        outStream << "true, ";
+        outStream << "1, ";
     else
-        outStream << "false, ";
+        outStream << "0, ";
 
     if(periodic_y)
-        outStream << "true, ";
+        outStream << "1, ";
     else
-        outStream << "false, ";
+        outStream << "0, ";
 
-    outStream << "false]\"" << std::endl;
+
+    outStream << "0]" << std::endl;
 
     outStream.close();
 }
@@ -745,5 +800,24 @@ void mg::MeshGenerator::checkBoundaries()
                 x(1,k) -= DY;
         }
     }
+}
+
+//------------------------------------------------------------------------------
+void mg::MeshGenerator::printProgress(double progress)
+{
+    int barWidth = 70;
+
+    std::cout << "[";
+    int pos = barWidth * progress;
+    for (int j = 0; j < barWidth; ++j) {
+        if (j < pos)
+            std::cout << "=";
+        else if (j == pos)
+            std::cout << ">";
+        else
+            std::cout << " ";
+    }
+    std::cout << "] " << int(progress * 100.0) << " %\r";
+    std::cout.flush();
 }
 //------------------------------------------------------------------------------
